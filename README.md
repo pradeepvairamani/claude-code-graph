@@ -1,28 +1,28 @@
 # Claude Code Graph
 
-Visualize Claude Code sessions as interactive graphs inside VS Code.
+See what Claude actually did. Every prompt, every subagent, every file change — rendered as an interactive graph right in your VS Code sidebar.
+
+![Claude Code Graph in action](media/screenshots/prompt-graph.png)
 
 ## Features
 
-- **Prompt Graph** — see every prompt, subagent call, and file change from a Claude Code session rendered as a connected node graph in the sidebar.
-- **Session Picker** — quickly switch between Claude Code sessions recorded in the current workspace.
-- **Live Watching** — automatically detects new transcript files as Claude Code runs.
+- **Prompt Graph** — a git-graph-style timeline of your entire Claude Code session. Each node is a prompt; branches show subagent spawns.
+- **Click to Inspect** — select any node to see the full prompt text, model used, files changed, and subagent details.
+- **Session Picker** — switch between sessions with a dropdown. See prompt counts, subagent counts, file changes, and branch info at a glance.
+- **Live Updates** — the graph refreshes automatically as Claude Code runs.
+- **Search & Filter** — filter prompts and files to find exactly what you're looking for.
 
 ## Requirements
 
 - VS Code 1.85+
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and used in the workspace at least once (so transcript files exist under `~/.claude/projects/`).
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — use it at least once in your workspace so transcript files exist under `~/.claude/projects/`.
 
-## Usage
+## Getting Started
 
 1. Install the extension.
-2. Open a project where you have previously used Claude Code.
+2. Open a project where you've used Claude Code.
 3. Click the **Claude Code Graph** icon in the Activity Bar.
-4. Use the **Claude Code Graph: Pick Session** command (`Cmd+Shift+P`) to switch sessions.
-
-## Extension Settings
-
-This extension does not add any VS Code settings at this time.
+4. Pick a session from the dropdown — the graph appears instantly.
 
 ## License
 
