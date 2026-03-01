@@ -3,7 +3,7 @@
   "displayName": "Claude Code Graph",
   "description": "Visualize Claude Code prompts, subagents, and file changes as an interactive graph",
   "version": "0.1.0",
-  "publisher": "claude-intel",
+  "publisher": "IdleVillager",
   "license": "MIT",
   "repository": {
     "type": "git",
