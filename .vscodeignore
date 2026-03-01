@@ -4,8 +4,10 @@ src/**
 test/**
 scripts/**
 node_modules/**
+.claude/**
 .gitignore
 tsconfig.json
 esbuild.js
 **/*.ts
 **/*.map
+*.vsix
