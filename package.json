@@ -1,0 +1,113 @@
+{
+  "name": "claude-git-intel",
+  "displayName": "Claude Git Intelligence",
+  "description": "Visualize which AI prompts produced which code — gutter annotations, commit trees, heatmaps, and lineage graphs",
+  "version": "0.1.0",
+  "publisher": "claude-intel",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeIntel.toggleBlame",
+        "title": "Claude Intel: Toggle Blame Annotations"
+      },
+      {
+        "command": "claudeIntel.showPromptDetail",
+        "title": "Claude Intel: Show Prompt Detail"
+      },
+      {
+        "command": "claudeIntel.toggleHeatmap",
+        "title": "Claude Intel: Toggle Heatmap"
+      },
+      {
+        "command": "claudeIntel.refreshIndex",
+        "title": "Claude Intel: Refresh Metadata Index"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Git Intelligence",
+      "properties": {
+        "claudeIntel.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Claude Git Intelligence annotations"
+        },
+        "claudeIntel.blameEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline blame annotations for AI-authored lines"
+        },
+        "claudeIntel.heatmapEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show AI contribution heatmap in the gutter"
+        },
+        "claudeIntel.intelDirectory": {
+          "type": "string",
+          "default": ".claude/intel",
+          "description": "Path to the Claude intel metadata directory (relative to workspace root)"
+        },
+        "claudeIntel.annotationColor": {
+          "type": "string",
+          "default": "#6b7280",
+          "description": "Color for inline blame annotations"
+        },
+        "claudeIntel.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "description": "Debounce delay in milliseconds for annotation updates"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeIntel",
+          "title": "Claude Git Intel",
+          "icon": "media/icons/claude-intel.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeIntel": [
+        {
+          "id": "claudeIntel.byAgent",
+          "name": "By Agent"
+        },
+        {
+          "id": "claudeIntel.bySession",
+          "name": "By Session"
+        },
+        {
+          "id": "claudeIntel.byBranch",
+          "name": "By Branch"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src --ext ts",
+    "test": "node --import tsx test/metadata.test.ts",
+    "package": "vsce package",
+    "seed-demo": "npx tsx scripts/seed-demo-data.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
