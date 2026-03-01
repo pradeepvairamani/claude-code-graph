@@ -101,7 +101,10 @@
     "lint": "eslint src --ext ts",
     "test": "node --import tsx test/metadata.test.ts",
     "package": "vsce package",
-    "seed-demo": "npx tsx scripts/seed-demo-data.ts"
+    "seed-demo": "npx tsx scripts/seed-demo-data.ts",
+    "cli": "npx tsx src/cli.ts",
+    "cli:status": "npx tsx src/cli.ts --status",
+    "cli:query": "npx tsx src/cli.ts --query"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

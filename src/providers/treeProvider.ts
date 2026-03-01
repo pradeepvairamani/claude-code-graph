@@ -23,10 +23,18 @@ export class IntelTreeProvider
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
+  private reader: MetadataReader | null;
+
   constructor(
-    private readonly reader: MetadataReader,
+    reader: MetadataReader | null,
     private readonly mode: GroupMode
-  ) {}
+  ) {
+    this.reader = reader;
+  }
+
+  setReader(reader: MetadataReader): void {
+    this.reader = reader;
+  }
 
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
@@ -89,7 +97,7 @@ export class IntelTreeProvider
   }
 
   private buildRootNodes(): IntelTreeNode[] {
-    if (!this.reader.exists()) {
+    if (!this.reader || !this.reader.exists()) {
       return [];
     }
 
