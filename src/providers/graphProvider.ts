@@ -195,6 +195,17 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         }
         break;
       }
+      case 'viewOutput': {
+        const prompt = this.currentGraph?.prompts.find(p => p.id === msg.nodeId);
+        if (prompt?.response) {
+          const doc = await vscode.workspace.openTextDocument({
+            content: prompt.response,
+            language: 'markdown',
+          });
+          await vscode.window.showTextDocument(doc, { preview: true });
+        }
+        break;
+      }
       case 'refresh': {
         if (this.currentSessionPath && this.watcher) {
           const sessionId = path.basename(this.currentSessionPath, '.jsonl');
@@ -322,6 +333,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       ...graph,
       prompts: graph.prompts.map(p => ({
         ...p,
+        response: !!p.response,
         fileChanges: dedupFiles(p.fileChanges),
         subagents: p.subagents.map(sa => ({
           ...sa,
@@ -464,8 +476,18 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       }
       .copy-btn.copied { color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991); }
 
+      .view-output-btn {
+        background: var(--vscode-button-secondaryBackground, #3a3d41);
+        color: var(--vscode-button-secondaryForeground, #ccc);
+        border: none; cursor: pointer; padding: 4px 12px;
+        border-radius: 3px; font-size: 12px;
+      }
+      .view-output-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground, #45494e);
+      }
+
       #graph-container { display: flex; flex-direction: column; height: calc(100vh - 115px); }
-      #graph { flex: 1; overflow-y: auto; overflow-x: auto; padding: 10px 12px; min-height: 60px; }
+      #graph { flex: 1; overflow-y: auto; overflow-x: auto; padding: 8px 10px; min-height: 60px; }
 
       #resize-handle {
         height: 5px; cursor: ns-resize; flex-shrink: 0;
@@ -488,31 +510,39 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
 
       /* Graph rows */
       .graph-row {
-        display: flex; align-items: flex-start;
-        min-height: 50px; position: relative; cursor: pointer;
-        border-radius: 4px; transition: background 0.1s;
+        display: flex; align-items: center;
+        min-height: 34px; position: relative; cursor: pointer;
+        border-radius: 3px; transition: background 0.1s;
       }
       .graph-row:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
       .graph-row.selected { background: var(--vscode-list-activeSelectionBackground, #094771); }
 
-      .graph-lanes { flex-shrink: 0; position: relative; }
-      .graph-label { flex: 1; padding: 8px 12px; min-width: 0; }
+      .graph-lanes { flex-shrink: 0; position: relative; display: flex; align-items: center; }
+      .graph-label { flex: 1; padding: 6px 10px 6px 6px; min-width: 0; }
 
       .graph-label .prompt-text {
-        font-size: 13px; line-height: 1.4;
+        font-size: 12px; line-height: 1.4;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
       .graph-label .meta {
-        font-size: 11px; color: var(--vscode-descriptionForeground, #888); margin-top: 2px;
+        font-size: 10px; color: var(--vscode-descriptionForeground, #888); margin-top: 3px;
       }
       .graph-label .meta .model { color: var(--vscode-textLink-foreground, #3794ff); }
+      .graph-label .meta .tools-count { color: var(--vscode-terminal-ansiCyan, #4fc3f7); }
       .graph-label .meta .files-count { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
       .graph-label .meta .subagent-count { color: var(--vscode-terminal-ansiMagenta, #bc89bd); }
 
       .subagent-row .graph-label .prompt-text {
-        font-size: 12px; color: var(--vscode-descriptionForeground, #aaa);
+        font-size: 11px; color: var(--vscode-descriptionForeground, #aaa);
       }
-      .subagent-row .graph-label .meta { font-size: 10px; }
+      .subagent-row .graph-label .meta { font-size: 9px; }
+
+      /* Separator between prompt groups */
+      .graph-row + .graph-row:not(.subagent-row) {
+        margin-top: 6px;
+        border-top: 1px solid var(--vscode-panel-border, #333);
+        padding-top: 2px;
+      }
 
       /* Detail panel */
       .detail-section { margin-bottom: 16px; }
@@ -571,11 +601,24 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       }
 
       .badge {
-        display: inline-block; font-size: 10px; padding: 1px 6px;
+        display: inline-block; font-size: 9px; padding: 1px 6px;
         border-radius: 8px; font-weight: 600;
       }
       .badge.files { background: rgba(226, 192, 141, 0.15); color: #e2c08d; }
       .badge.subagents { background: rgba(188, 137, 189, 0.15); color: #bc89bd; }
+
+      .tool-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+      .tool-badge {
+        display: inline-flex; align-items: center; gap: 5px;
+        font-size: 11px; padding: 3px 8px;
+        border-radius: 4px;
+        background: var(--vscode-textBlockQuote-background, #252526);
+        color: var(--vscode-foreground, #ccc);
+      }
+      .tool-count {
+        font-size: 10px; font-weight: 600;
+        color: var(--vscode-terminal-ansiCyan, #4fc3f7);
+      }
 
       svg.graph-svg { display: block; }
 
@@ -603,10 +646,15 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         '#ba68c8', '#e57373', '#4db6ac', '#fff176',
       ];
       const MAIN_COLOR = '#4fc3f7';
-      const LANE_WIDTH = 24;
-      const NODE_RADIUS = 6;
-      const ROW_HEIGHT = 56;
-      const SUBAGENT_ROW_HEIGHT = 44;
+      const LANE_WIDTH = 20;
+      const NODE_RADIUS = 5;
+      const ROW_HEIGHT = 40;
+      const SUBAGENT_ROW_HEIGHT = 34;
+      const STROKE_WIDTH = 2;
+      const SHADOW_WIDTH = 4;
+      const SHADOW_OPACITY = 0.75;
+
+      const BG_COLOR = getComputedStyle(document.body).backgroundColor || '#1e1e1e';
 
       initSessionPicker();
       renderAll();
@@ -699,10 +747,10 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
           if (graph && graph.sessionId === s.id) { opt.selected = true; }
           picker.appendChild(opt);
         }
-        picker.addEventListener('change', (e) => {
-          vscode.postMessage({ type: 'switchSession', sessionId: e.target.value });
-        });
       }
+      document.getElementById('sessionPicker').addEventListener('change', (e) => {
+        vscode.postMessage({ type: 'switchSession', sessionId: e.target.value });
+      });
 
       function renderAll() { renderStats(); renderGraph(); }
 
@@ -726,7 +774,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
 
         const rows = buildRows(graph);
         const maxLanes = getMaxLanes(rows);
-        const svgWidth = (maxLanes + 2) * LANE_WIDTH;
+        const svgWidth = 8 + (maxLanes + 1) * LANE_WIDTH;
 
         let html = '';
         for (let ri = 0; ri < rows.length; ri++) {
@@ -737,12 +785,15 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
           const svgParts = [];
 
           // Main line vertical
+          const hasMergeBack = row.type === 'subagent' && row.isLast;
           if (ri === 0 && row.type === 'prompt') {
             svgParts.push(svgLine(laneX(0), rowH / 2, laneX(0), rowH, MAIN_COLOR));
           } else if (!isLast) {
             svgParts.push(svgLine(laneX(0), 0, laneX(0), rowH, MAIN_COLOR));
           } else {
-            svgParts.push(svgLine(laneX(0), 0, laneX(0), rowH / 2, MAIN_COLOR));
+            // Extend trunk to full height when a merge-back curve targets the bottom
+            const mainEnd = hasMergeBack ? rowH : rowH / 2;
+            svgParts.push(svgLine(laneX(0), 0, laneX(0), mainEnd, MAIN_COLOR));
           }
 
           // Subagent lane verticals
@@ -750,7 +801,10 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             if (lane.index === 0) continue;
             const x = laneX(lane.index);
             const color = LANE_COLORS[(lane.index - 1) % LANE_COLORS.length];
-            svgParts.push(svgLine(x, 0, x, rowH, color));
+            // Stop at node center if this lane merges back on this row
+            const isOwnLane = row.type === 'subagent' && lane.index === row.laneIndex + 1;
+            const endY = (isOwnLane && row.isLast) ? rowH / 2 : rowH;
+            svgParts.push(svgLine(x, 0, x, endY, color));
           }
 
           // Branch-off curves from prompt to subagents
@@ -759,12 +813,16 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
               const fromX = laneX(0);
               const toX = laneX(sa.laneIndex + 1);
               const color = LANE_COLORS[sa.laneIndex % LANE_COLORS.length];
+              const d = (rowH / 2) * 0.8;
+              const pathD = 'M ' + fromX + ' ' + (rowH / 2) +
+                ' C ' + fromX + ' ' + (rowH / 2 + d) +
+                ', ' + toX + ' ' + (rowH - d) +
+                ', ' + toX + ' ' + rowH;
               svgParts.push(
-                '<path d="M ' + fromX + ' ' + (rowH / 2) +
-                ' C ' + ((fromX + toX) / 2) + ' ' + (rowH / 2) +
-                ', ' + toX + ' ' + (rowH * 0.75) +
-                ', ' + toX + ' ' + rowH +
-                '" stroke="' + color + '" stroke-width="2" fill="none" />'
+                '<path d="' + pathD + '" stroke="' + BG_COLOR + '" stroke-width="' + SHADOW_WIDTH + '" stroke-opacity="' + SHADOW_OPACITY + '" fill="none" stroke-linecap="round" />'
+              );
+              svgParts.push(
+                '<path d="' + pathD + '" stroke="' + color + '" stroke-width="' + STROKE_WIDTH + '" fill="none" stroke-linecap="round" />'
               );
             }
           }
@@ -774,23 +832,27 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             const fromX = laneX(row.laneIndex + 1);
             const toX = laneX(0);
             const color = LANE_COLORS[row.laneIndex % LANE_COLORS.length];
+            const d = (rowH / 2) * 0.8;
+            const pathD = 'M ' + fromX + ' ' + (rowH / 2) +
+              ' C ' + fromX + ' ' + (rowH / 2 + d) +
+              ', ' + toX + ' ' + (rowH - d) +
+              ', ' + toX + ' ' + rowH;
             svgParts.push(
-              '<path d="M ' + fromX + ' ' + (rowH / 2) +
-              ' C ' + fromX + ' ' + (rowH * 0.85) +
-              ', ' + ((fromX + toX) / 2) + ' ' + rowH +
-              ', ' + toX + ' ' + rowH +
-              '" stroke="' + color + '" stroke-width="2" fill="none" />'
+              '<path d="' + pathD + '" stroke="' + BG_COLOR + '" stroke-width="' + SHADOW_WIDTH + '" stroke-opacity="' + SHADOW_OPACITY + '" fill="none" stroke-linecap="round" />'
+            );
+            svgParts.push(
+              '<path d="' + pathD + '" stroke="' + color + '" stroke-width="' + STROKE_WIDTH + '" fill="none" stroke-linecap="round" />'
             );
           }
 
-          // Node circle
+          // Node circle with outline ring
           const nodeX = row.type === 'subagent' ? laneX(row.laneIndex + 1) : laneX(0);
           const nodeColor = row.type === 'subagent'
             ? LANE_COLORS[row.laneIndex % LANE_COLORS.length]
             : MAIN_COLOR;
           svgParts.push(
             '<circle cx="' + nodeX + '" cy="' + (rowH / 2) + '" r="' + NODE_RADIUS +
-            '" fill="' + nodeColor + '" />'
+            '" fill="' + nodeColor + '" stroke="' + BG_COLOR + '" stroke-width="1" stroke-opacity="0.75" />'
           );
 
           const svg = '<svg class="graph-svg" width="' + svgWidth + '" height="' + rowH +
@@ -803,11 +865,13 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             const p = row.data;
             rowNodeId = p.id;
             const totalFiles = p.fileChanges.length + p.subagents.reduce((s, a) => s + a.fileChanges.length, 0);
+            const totalTools = p.toolsUsed ? p.toolsUsed.reduce((s, t) => s + t.count, 0) : 0;
             label =
-              '<div class="prompt-text">' + esc(truncate(p.prompt, 100)) + '</div>' +
+              '<div class="prompt-text">' + esc(truncate(p.prompt, 80)) + '</div>' +
               '<div class="meta">' +
                 '<span class="model">' + esc(p.model) + '</span> &middot; ' +
-                new Date(p.timestamp).toLocaleTimeString() +
+                new Date(p.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) +
+                (totalTools > 0 ? ' &middot; <span class="tools-count">' + totalTools + ' tool call' + (totalTools !== 1 ? 's' : '') + '</span>' : '') +
                 (totalFiles > 0 ? ' &middot; <span class="files-count">' + totalFiles + ' file' + (totalFiles !== 1 ? 's' : '') + '</span>' : '') +
                 (p.subagents.length > 0 ? ' &middot; <span class="subagent-count">' + p.subagents.length + ' subagent' + (p.subagents.length !== 1 ? 's' : '') + '</span>' : '') +
               '</div>';
@@ -817,7 +881,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             label =
               '<div class="prompt-text">' +
                 '<span class="badge subagents">' + esc(sa.agentType) + '</span> ' +
-                esc(truncate(sa.description, 80)) +
+                esc(truncate(sa.description, 60)) +
               '</div>' +
               '<div class="meta">' +
                 (sa.fileChanges.length > 0
@@ -873,13 +937,21 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
           const activeLanes = [{ index: 0, color: MAIN_COLOR }];
           rows.push({ type: 'prompt', data: prompt, activeLanes });
 
-          for (const sa of prompt.subagents) {
+          const subagents = prompt.subagents;
+          for (let si = 0; si < subagents.length; si++) {
+            const sa = subagents[si];
+            // Include this subagent's lane plus lanes for subagents not yet rendered
+            const lanes = [{ index: 0, color: MAIN_COLOR }];
+            for (let sj = si; sj < subagents.length; sj++) {
+              const other = subagents[sj];
+              lanes.push({
+                index: other.laneIndex + 1,
+                color: LANE_COLORS[other.laneIndex % LANE_COLORS.length]
+              });
+            }
             rows.push({
               type: 'subagent', data: sa, laneIndex: sa.laneIndex, isLast: true,
-              activeLanes: [
-                { index: 0, color: MAIN_COLOR },
-                { index: sa.laneIndex + 1, color: LANE_COLORS[sa.laneIndex % LANE_COLORS.length] }
-              ],
+              activeLanes: lanes,
             });
           }
         }
@@ -896,10 +968,13 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         return max;
       }
 
-      function laneX(index) { return LANE_WIDTH + index * LANE_WIDTH; }
+      function laneX(index) { return 8 + LANE_WIDTH / 2 + index * LANE_WIDTH; }
 
+      function svgShadow(x1, y1, x2, y2) {
+        return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+BG_COLOR+'" stroke-width="'+SHADOW_WIDTH+'" stroke-opacity="'+SHADOW_OPACITY+'" stroke-linecap="round" />';
+      }
       function svgLine(x1, y1, x2, y2, color) {
-        return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="2" />';
+        return svgShadow(x1, y1, x2, y2) + '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="'+STROKE_WIDTH+'" stroke-linecap="round" />';
       }
 
       // --- Detail panel ---
@@ -925,6 +1000,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             panel.innerHTML = renderPromptDetail(prompt);
             attachFileHandlers(panel, prompt.id, 'prompt');
             attachCopyHandlers(panel);
+            attachViewOutputHandler(panel);
             return;
           }
         }
@@ -937,11 +1013,27 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         html += '<div class="detail-section"><h3>Prompt <button class="copy-btn" data-copy="' + esc(prompt.prompt) + '" title="Copy prompt">Copy</button></h3>';
         html += '<div class="detail-prompt">' + esc(prompt.prompt) + '</div></div>';
 
+        if (prompt.response) {
+          html += '<div class="detail-section"><h3>Response</h3>';
+          html += '<button class="view-output-btn" data-node-id="' + esc(prompt.id) + '">View Full Output</button>';
+          html += '</div>';
+        }
+
         html += '<div class="detail-section"><h3>Details</h3><div class="detail-meta">';
         html += 'Model: <code>' + esc(prompt.model) + '</code><br>';
         html += 'Time: ' + new Date(prompt.timestamp).toLocaleString() + '<br>';
         html += 'Session: <code>' + esc(prompt.sessionId.slice(0, 8)) + '</code> <button class="copy-btn" data-copy="' + esc(prompt.sessionId) + '" title="Copy session ID">Copy</button>';
         html += '</div></div>';
+
+        if (prompt.toolsUsed && prompt.toolsUsed.length > 0) {
+          const totalCalls = prompt.toolsUsed.reduce((s, t) => s + t.count, 0);
+          html += '<div class="detail-section"><h3>Tools Used (' + totalCalls + ' call' + (totalCalls !== 1 ? 's' : '') + ')</h3>';
+          html += '<div class="tool-badges">';
+          for (const t of prompt.toolsUsed) {
+            html += '<span class="tool-badge">' + esc(t.name) + '<span class="tool-count">' + t.count + '</span></span>';
+          }
+          html += '</div></div>';
+        }
 
         if (prompt.fileChanges.length > 0) {
           html += '<div class="detail-section"><h3>Files Changed (' + prompt.fileChanges.length + ')</h3>';
@@ -1097,6 +1189,13 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             e.stopPropagation();
             copyText(btn.getAttribute('data-copy'), btn);
           });
+        });
+      }
+
+      function attachViewOutputHandler(container) {
+        container.querySelector('.view-output-btn')?.addEventListener('click', (e) => {
+          const nodeId = e.target.getAttribute('data-node-id');
+          vscode.postMessage({ type: 'viewOutput', nodeId });
         });
       }
 

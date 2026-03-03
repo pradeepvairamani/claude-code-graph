@@ -21,6 +21,10 @@ export interface PromptNode {
   timestamp: string;
   /** Which model handled it */
   model: string;
+  /** Concatenated assistant response text (text + thinking blocks) */
+  response: string;
+  /** Tools invoked during this prompt's response, with call counts */
+  toolsUsed: Array<{ name: string; count: number }>;
   /** Session ID */
   sessionId: string;
   /** Files changed by this prompt (directly or via tool calls) */

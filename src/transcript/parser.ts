@@ -27,9 +27,10 @@ export class TranscriptParser {
       return null;
     }
 
-    // Find session metadata from first user entry
+    // Derive session ID from filename (not transcript content, which may
+    // carry a different API session ID when conversations are resumed)
+    const sessionId = path.basename(sessionJsonlPath, '.jsonl');
     const firstUser = entries.find(e => e.type === 'user' && !e.isSidechain);
-    const sessionId = firstUser?.sessionId || '';
     const slug = firstUser?.slug || '';
     const branch = firstUser?.gitBranch || 'HEAD';
     const startedAt = firstUser?.timestamp || '';
@@ -106,11 +107,19 @@ export class TranscriptParser {
       const firstAssistant = responseEntries.find(e => e.type === 'assistant');
       const model = (firstAssistant?.message as { model?: string } | undefined)?.model || 'unknown';
 
+      // Extract assistant response text (text + thinking blocks)
+      const response = this.extractResponseText(responseEntries);
+
+      // Extract tool usage counts
+      const toolsUsed = this.extractToolsUsed(responseEntries);
+
       prompts.push({
         id: promptUuid,
         prompt: promptText,
         timestamp: promptEntry.timestamp,
         model,
+        response,
+        toolsUsed,
         sessionId,
         fileChanges,
         subagents,
@@ -207,6 +216,61 @@ export class TranscriptParser {
     }
 
     return '';
+  }
+
+  /**
+   * Extract concatenated response text from assistant entries.
+   * Includes both text and thinking blocks.
+   */
+  private extractResponseText(responseEntries: RawTranscriptEntry[]): string {
+    const parts: string[] = [];
+
+    for (const entry of responseEntries) {
+      if (entry.type !== 'assistant' || !entry.message) { continue; }
+      const content = entry.message.content;
+
+      if (typeof content === 'string') {
+        if (content.length > 0) { parts.push(content); }
+        continue;
+      }
+
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'thinking' && block.thinking) {
+            parts.push('[Thinking]\n' + block.thinking);
+          } else if (block.type === 'text' && block.text) {
+            parts.push(block.text);
+          }
+        }
+      }
+    }
+
+    return parts.join('\n\n');
+  }
+
+  /**
+   * Extract tool usage counts from assistant response entries.
+   */
+  private extractToolsUsed(
+    responseEntries: RawTranscriptEntry[]
+  ): Array<{ name: string; count: number }> {
+    const counts = new Map<string, number>();
+
+    for (const entry of responseEntries) {
+      if (entry.type !== 'assistant' || !entry.message) { continue; }
+      const content = entry.message.content;
+      if (!Array.isArray(content)) { continue; }
+
+      for (const block of content) {
+        if (block.type === 'tool_use' && block.name) {
+          counts.set(block.name, (counts.get(block.name) || 0) + 1);
+        }
+      }
+    }
+
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
   }
 
   /**
