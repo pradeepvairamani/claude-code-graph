@@ -1000,8 +1000,9 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         let html = '<ul class="file-list">';
         for (let i = 0; i < files.length; i++) {
           const f = files[i];
-          const name = f.filePath.split('/').pop() || f.filePath;
-          const dir = f.filePath.split('/').slice(-2, -1)[0] || '';
+          const parts = f.filePath.split(/[\\/]/);
+          const name = parts.pop() || f.filePath;
+          const dir = parts.length > 0 ? parts[parts.length - 1] : '';
           const icon = f.changeType === 'create' ? '+' : '~';
           const iconClass = f.changeType;
 
