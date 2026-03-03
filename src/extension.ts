@@ -92,7 +92,7 @@ function findClaudeProjectDir(
   // Strategy 1: walk up from workspace root, check exact slug matches
   let current = workspaceRoot;
   while (current && current !== path.dirname(current)) {
-    const slug = current.replace(/\//g, '-');
+    const slug = current.replace(/[:\\/]/g, '-');
     const candidate = path.join(projectsBase, slug);
     if (fs.existsSync(candidate)) {
       outputChannel.appendLine(`[Claude Code Graph] Matched project dir via path: ${current}`);
@@ -101,15 +101,18 @@ function findClaudeProjectDir(
     current = path.dirname(current);
   }
 
-  // Strategy 2: scan project dirs for any whose decoded path is a parent of workspaceRoot
+  // Strategy 2: scan project dirs, compare slugs directly
+  // (avoids lossy decoding of hyphens which are ambiguous with path separators)
   try {
+    const workspaceSlug = workspaceRoot.replace(/[:\\/]/g, '-').toLowerCase();
     const dirs = fs.readdirSync(projectsBase);
     dirs.sort((a: string, b: string) => b.length - a.length);
     for (const dir of dirs) {
-      const decoded = dir.replace(/^-/, '/').replace(/-/g, '/');
-      if (workspaceRoot.startsWith(decoded) || workspaceRoot === decoded) {
+      const dirLower = dir.toLowerCase();
+      if (workspaceSlug === dirLower ||
+          (workspaceSlug.startsWith(dirLower) && workspaceSlug[dirLower.length] === '-')) {
         const candidate = path.join(projectsBase, dir);
-        outputChannel.appendLine(`[Claude Code Graph] Matched project dir via scan: ${decoded}`);
+        outputChannel.appendLine(`[Claude Code Graph] Matched project dir via scan: ${dir}`);
         return candidate;
       }
     }
