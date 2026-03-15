@@ -371,8 +371,10 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
     lightGraph: Record<string, unknown> | null,
     availableSessions: Array<{ id: string; mtime: string }>
   ): string {
-    const graphJson = JSON.stringify(lightGraph);
-    const sessionsJson = JSON.stringify(availableSessions);
+    // Escape </script> sequences to prevent premature tag closure
+    const safeJson = (obj: unknown) => JSON.stringify(obj).replace(/<\//g, '<\\/');
+    const graphJson = safeJson(lightGraph);
+    const sessionsJson = safeJson(availableSessions);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -407,8 +409,10 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
     </div>
   </div>
 
+  <script id="graph-data" type="application/json">${graphJson}</script>
+  <script id="sessions-data" type="application/json">${sessionsJson}</script>
   <script>
-    ${this.getScript(graphJson, sessionsJson)}
+    ${this.getScript()}
   </script>
 </body>
 </html>`;
@@ -782,7 +786,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
     `;
   }
 
-  private getScript(graphJson: string, sessionsJson: string): string {
+  private getScript(): string {
     return `
       const vscode = acquireVsCodeApi();
 
@@ -790,8 +794,8 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         document.getElementById('graph').innerHTML = '<pre style="color:red;padding:8px;">JS Error: ' + msg + '\\nLine: ' + line + ':' + col + '\\n' + (err && err.stack || '') + '</pre>';
       };
 
-      let graph = ${graphJson};
-      let sessions = ${sessionsJson};
+      let graph = JSON.parse(document.getElementById('graph-data').textContent || 'null');
+      let sessions = JSON.parse(document.getElementById('sessions-data').textContent || '[]');
       let selectedNodeId = null;
       let statsDashboardOpen = false;
 
