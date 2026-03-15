@@ -21,7 +21,12 @@ export class DiffContentProvider implements vscode.TextDocumentContentProvider {
     return this.contents.get(uri.toString()) || '';
   }
 
+  clear(): void {
+    this.contents.clear();
+  }
+
   dispose(): void {
+    this.contents.clear();
     this._onDidChange.dispose();
   }
 }
@@ -109,7 +114,12 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
     const sessions = this.watcher.getSessionFiles();
     if (sessions.length > 0) {
       this.currentSessionPath = sessions[0].path;
-      this.currentGraph = this.watcher.parseMostRecentSession();
+      try {
+        this.currentGraph = this.watcher.parseMostRecentSession();
+      } catch (e) {
+        console.error('[Claude Code Graph] Failed to parse session:', e);
+        this.currentGraph = null;
+      }
     }
   }
 
@@ -123,6 +133,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
     if (session) {
       this.currentSessionPath = session.path;
       this.currentGraph = this.watcher.parseSessionById(sessionId);
+      this.diffProvider.clear();
       this.fullRebuildWebview();
     }
   }
@@ -139,8 +150,9 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       return;
     }
 
+    const watcher = this.watcher;
     const items = sessions.map(s => {
-      const graph = this.watcher.parseSessionById(s.sessionId);
+      const graph = watcher.parseSessionById(s.sessionId);
       const firstPrompt = graph?.prompts[0]?.prompt || 'Empty session';
       const truncated = firstPrompt.length > 80
         ? firstPrompt.slice(0, 77) + '...'
@@ -380,7 +392,8 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       <button id="refreshBtn" title="Refresh">&#x21bb;</button>
     </div>
   </div>
-  <div id="stats"></div>
+  <div id="stats"><span id="stats-text"></span><span id="stats-toggle">▾ Stats</span></div>
+  <div id="stats-dashboard"><div class="dash-inner" id="stats-dashboard-inner"></div></div>
   <div id="search-bar">
     <input id="searchInput" type="text" placeholder="Filter prompts or files..." />
   </div>
@@ -411,6 +424,8 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         background: var(--vscode-editor-background, #1e1e1e);
         overflow: hidden;
         height: 100vh;
+        display: flex;
+        flex-direction: column;
       }
 
       #header {
@@ -420,6 +435,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         padding: 8px 12px;
         border-bottom: 1px solid var(--vscode-panel-border, #333);
         gap: 8px;
+        flex-shrink: 0;
       }
       #header h1 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; }
 
@@ -442,11 +458,98 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         padding: 6px 12px; font-size: 11px;
         color: var(--vscode-descriptionForeground, #888);
         border-bottom: 1px solid var(--vscode-panel-border, #333);
+        cursor: pointer; user-select: none;
+        display: flex; align-items: center; justify-content: space-between;
+        flex-shrink: 0;
+      }
+      #stats:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+      #stats-toggle { font-size: 11px; opacity: 0.45; flex-shrink: 0; margin-left: 6px; line-height: 1; }
+
+      /* Stat pills in the stats bar */
+      .stat-pill { display: inline-flex; align-items: baseline; gap: 3px; margin-right: 10px; }
+      .stat-pill strong { font-size: 12px; font-weight: 700; }
+      .stat-pill .spl { font-size: 10px; color: var(--vscode-descriptionForeground, #888); }
+      .sp-prompts strong { color: var(--vscode-textLink-foreground, #3794ff); }
+      .sp-agents strong  { color: var(--vscode-terminal-ansiMagenta, #bc89bd); }
+      .sp-files strong   { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+      .sp-tokens strong  { color: var(--vscode-terminal-ansiCyan, #4fc3f7); }
+
+      /* Stats dashboard */
+      #stats-dashboard {
+        display: none; overflow-y: auto; flex-shrink: 0;
+        border-bottom: 1px solid var(--vscode-panel-border, #333);
+        max-height: 340px;
+      }
+      #stats-dashboard.visible { display: block; }
+      .dash-inner { padding: 0; }
+      .dash-section { padding: 10px 12px; border-bottom: 1px solid var(--vscode-panel-border, #333); }
+      .dash-section:last-child { border-bottom: none; }
+      .dash-section h4 {
+        font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+        color: var(--vscode-descriptionForeground, #888); margin-bottom: 8px;
+      }
+
+      /* Overview cards */
+      .overview-cards { display: flex; gap: 5px; }
+      .overview-card {
+        flex: 1; background: var(--vscode-textBlockQuote-background, #252526);
+        border-radius: 4px; padding: 7px 8px; border-top: 2px solid transparent;
+      }
+      .overview-card .ov-value { font-size: 15px; font-weight: 700; line-height: 1.2; }
+      .overview-card .ov-label { font-size: 9px; color: var(--vscode-descriptionForeground, #888); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+      .oc-prompts { border-top-color: var(--vscode-textLink-foreground, #3794ff); }
+      .oc-prompts .ov-value { color: var(--vscode-textLink-foreground, #3794ff); }
+      .oc-agents  { border-top-color: var(--vscode-terminal-ansiMagenta, #bc89bd); }
+      .oc-agents  .ov-value { color: var(--vscode-terminal-ansiMagenta, #bc89bd); }
+      .oc-dur     { border-top-color: var(--vscode-terminal-ansiGreen, #73c991); }
+      .oc-dur     .ov-value { color: var(--vscode-terminal-ansiGreen, #73c991); }
+      .oc-files   { border-top-color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+      .oc-files   .ov-value { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+      .session-started { font-size: 10px; color: var(--vscode-descriptionForeground, #888); margin-top: 7px; }
+      .session-started strong { color: var(--vscode-foreground, #ccc); font-weight: 600; }
+
+      /* Cost banner */
+      .cost-banner {
+        background: rgba(115, 201, 145, 0.07); border: 1px solid rgba(115, 201, 145, 0.2);
+        border-radius: 4px; padding: 9px 12px; display: flex; align-items: center;
+        justify-content: space-between; margin-bottom: 8px;
+      }
+      .cost-amount { font-size: 22px; font-weight: 700; color: var(--vscode-terminal-ansiGreen, #73c991); line-height: 1; }
+      .cost-sublabel { font-size: 10px; color: var(--vscode-descriptionForeground, #888); margin-top: 3px; }
+      .cost-right { font-size: 10px; color: var(--vscode-descriptionForeground, #888); text-align: right; line-height: 1.7; }
+
+      /* Token row */
+      .token-row { display: flex; gap: 5px; }
+      .token-item { flex: 1; background: var(--vscode-textBlockQuote-background, #252526); border-radius: 3px; padding: 5px 6px; text-align: center; }
+      .token-item .tok-val { font-size: 11px; font-weight: 600; }
+      .token-item .tok-lbl { font-size: 9px; color: var(--vscode-descriptionForeground, #888); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.03em; }
+      .tok-in    { color: var(--vscode-textLink-foreground, #3794ff); }
+      .tok-out   { color: var(--vscode-terminal-ansiGreen, #73c991); }
+      .tok-cache { color: var(--vscode-terminal-ansiMagenta, #bc89bd); }
+
+      /* Tool bars */
+      .tool-bar-list { display: flex; flex-direction: column; gap: 6px; }
+      .tool-bar-item { display: flex; align-items: center; gap: 8px; }
+      .tool-bar-name { width: 72px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+      .tool-bar-track { flex: 1; height: 6px; background: var(--vscode-textBlockQuote-background, #252526); border-radius: 3px; overflow: hidden; }
+      .tool-bar-fill { height: 100%; background: var(--vscode-terminal-ansiCyan, #4fc3f7); border-radius: 3px; }
+      .tool-bar-count { font-size: 10px; font-weight: 600; color: var(--vscode-descriptionForeground, #888); width: 24px; text-align: right; flex-shrink: 0; }
+
+      /* File stat list */
+      .file-stat-list { list-style: none; display: flex; flex-direction: column; gap: 1px; }
+      .file-stat-item { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 3px 6px; border-radius: 3px; }
+      .file-stat-item:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+      .file-stat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+      .file-stat-badge {
+        flex-shrink: 0; font-size: 9px; font-weight: 700;
+        background: rgba(79, 195, 247, 0.12); color: var(--vscode-terminal-ansiCyan, #4fc3f7);
+        padding: 1px 6px; border-radius: 8px; min-width: 22px; text-align: center;
       }
 
       #search-bar {
         padding: 6px 12px;
         border-bottom: 1px solid var(--vscode-panel-border, #333);
+        flex-shrink: 0;
       }
       #searchInput {
         width: 100%;
@@ -486,7 +589,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         background: var(--vscode-button-secondaryHoverBackground, #45494e);
       }
 
-      #graph-container { display: flex; flex-direction: column; height: calc(100vh - 115px); }
+      #graph-container { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
       #graph { flex: 1; overflow-y: auto; overflow-x: auto; padding: 8px 10px; min-height: 60px; }
 
       #resize-handle {
@@ -499,8 +602,21 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       }
 
       #detail-panel {
-        overflow-y: auto; padding: 12px;
+        overflow-y: auto; padding: 0;
         display: none; min-height: 60px;
+        border-top: 2px solid var(--vscode-textLink-foreground, #3794ff);
+      }
+      .detail-node-header {
+        padding: 8px 12px; display: flex; align-items: center; justify-content: space-between;
+        background: var(--vscode-sideBar-background, #252526);
+        border-bottom: 1px solid var(--vscode-panel-border, #333);
+        flex-shrink: 0;
+      }
+      .detail-node-header .node-index {
+        font-size: 11px; font-weight: 700; color: var(--vscode-textLink-foreground, #3794ff);
+      }
+      .detail-node-header .node-time {
+        font-size: 10px; color: var(--vscode-descriptionForeground, #888);
       }
 
       .placeholder {
@@ -526,7 +642,9 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       }
       .graph-label .meta {
         font-size: 10px; color: var(--vscode-descriptionForeground, #888); margin-top: 3px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
+      .graph-label .meta .time { color: var(--vscode-terminal-ansiGreen, #73c991); }
       .graph-label .meta .model { color: var(--vscode-textLink-foreground, #3794ff); }
       .graph-label .meta .tools-count { color: var(--vscode-terminal-ansiCyan, #4fc3f7); }
       .graph-label .meta .files-count { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
@@ -545,23 +663,56 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       }
 
       /* Detail panel */
-      .detail-section { margin-bottom: 16px; }
-      .detail-section h3 {
-        font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-        color: var(--vscode-descriptionForeground, #888); margin-bottom: 6px;
+      .detail-section {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--vscode-panel-border, #333);
       }
+      .detail-section:last-child { border-bottom: none; }
+      .detail-section h3 {
+        font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+        color: var(--vscode-descriptionForeground, #888); margin-bottom: 8px;
+        display: flex; align-items: center; gap: 8px;
+      }
+      .section-count {
+        font-size: 9px; font-weight: 600; text-transform: none; letter-spacing: 0;
+        background: var(--vscode-badge-background, #4d4d4d);
+        color: var(--vscode-badge-foreground, #fff);
+        padding: 1px 6px; border-radius: 8px;
+      }
+      .collapsible-header {
+        cursor: pointer; user-select: none;
+        display: flex; align-items: center; gap: 6px;
+        margin: -10px -12px; padding: 10px 12px;
+        border-radius: 2px;
+      }
+      .collapsible-header:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+      .collapsible-header .chev {
+        font-size: 13px; line-height: 1; flex-shrink: 0;
+        color: var(--vscode-textLink-foreground, #3794ff);
+      }
+      .collapsible-body { display: none; padding-top: 10px; }
+      .collapsible-body.open { display: block; }
+      .detail-grid {
+        display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: baseline;
+        font-size: 11px; background: var(--vscode-textBlockQuote-background, #252526);
+        border-radius: 4px; padding: 10px 12px;
+      }
+      .detail-key { color: var(--vscode-descriptionForeground, #888); white-space: nowrap; }
+      .detail-val { color: var(--vscode-foreground, #ccc); }
+      .detail-val code {
+        font-family: var(--vscode-editor-font-family, monospace);
+        background: var(--vscode-editor-background, #1e1e1e);
+        padding: 1px 5px; border-radius: 3px; font-size: 10px;
+      }
+      .detail-val .tok-in { color: var(--vscode-textLink-foreground, #3794ff); }
+      .detail-val .tok-out { color: var(--vscode-terminal-ansiGreen, #73c991); }
+      .detail-val .tok-cache { color: var(--vscode-terminal-ansiMagenta, #bc89bd); }
       .detail-prompt {
         font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
         padding: 10px;
         background: var(--vscode-textBlockQuote-background, #252526);
         border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
         border-radius: 3px;
-      }
-      .detail-meta { font-size: 12px; line-height: 1.8; }
-      .detail-meta code {
-        font-family: var(--vscode-editor-font-family, monospace);
-        background: var(--vscode-textBlockQuote-background, #252526);
-        padding: 1px 5px; border-radius: 3px; font-size: 11px;
       }
 
       .file-list { list-style: none; }
@@ -571,9 +722,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         transition: background 0.1s;
       }
       .file-list li:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
-      .file-icon { font-size: 11px; width: 16px; text-align: center; font-weight: bold; }
-      .file-icon.create { color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991); }
-      .file-icon.update { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+      .file-icon { font-size: 7px; width: 14px; text-align: center; opacity: 0.5; }
       .file-name {
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
       }
@@ -607,18 +756,17 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       .badge.files { background: rgba(226, 192, 141, 0.15); color: #e2c08d; }
       .badge.subagents { background: rgba(188, 137, 189, 0.15); color: #bc89bd; }
 
-      .tool-badges { display: flex; flex-wrap: wrap; gap: 6px; }
-      .tool-badge {
-        display: inline-flex; align-items: center; gap: 5px;
-        font-size: 11px; padding: 3px 8px;
-        border-radius: 4px;
-        background: var(--vscode-textBlockQuote-background, #252526);
-        color: var(--vscode-foreground, #ccc);
-      }
-      .tool-count {
-        font-size: 10px; font-weight: 600;
-        color: var(--vscode-terminal-ansiCyan, #4fc3f7);
-      }
+      .tool-bar-chart { display: flex; flex-direction: column; gap: 5px; }
+      .tc-row { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 2px 4px; border-radius: 3px; margin: 0 -4px; }
+      .tc-name { width: 68px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tc-track { flex: 1; height: 5px; background: var(--vscode-textBlockQuote-background, #252526); border-radius: 3px; overflow: hidden; }
+      .tc-fill { height: 100%; border-radius: 3px; }
+      .tc-fill.cat-file   { background: var(--vscode-textLink-foreground, #3794ff); }
+      .tc-fill.cat-shell  { background: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+      .tc-fill.cat-agent  { background: var(--vscode-terminal-ansiMagenta, #bc89bd); }
+      .tc-fill.cat-web    { background: var(--vscode-terminal-ansiGreen, #73c991); }
+      .tc-fill.cat-other  { background: var(--vscode-terminal-ansiCyan, #4fc3f7); }
+      .tc-count { width: 22px; text-align: right; flex-shrink: 0; font-size: 10px; font-weight: 600; color: var(--vscode-descriptionForeground, #888); }
 
       svg.graph-svg { display: block; }
 
@@ -637,9 +785,15 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
   private getScript(graphJson: string, sessionsJson: string): string {
     return `
       const vscode = acquireVsCodeApi();
+
+      window.onerror = function(msg, src, line, col, err) {
+        document.getElementById('graph').innerHTML = '<pre style="color:red;padding:8px;">JS Error: ' + msg + '\\nLine: ' + line + ':' + col + '\\n' + (err && err.stack || '') + '</pre>';
+      };
+
       let graph = ${graphJson};
       let sessions = ${sessionsJson};
       let selectedNodeId = null;
+      let statsDashboardOpen = false;
 
       const LANE_COLORS = [
         '#4fc3f7', '#f06292', '#81c784', '#ffb74d',
@@ -752,18 +906,157 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
         vscode.postMessage({ type: 'switchSession', sessionId: e.target.value });
       });
 
-      function renderAll() { renderStats(); renderGraph(); }
+      function renderAll() {
+        renderStats();
+        renderGraph();
+        if (statsDashboardOpen) { renderStatsDashboard(); }
+      }
 
       function renderStats() {
-        const el = document.getElementById('stats');
+        const el = document.getElementById('stats-text');
         if (!graph) { el.textContent = 'No session data'; return; }
-        el.innerHTML =
-          '<strong>' + graph.prompts.length + '</strong> prompts &middot; ' +
-          '<strong>' + graph.totalSubagents + '</strong> subagents &middot; ' +
-          '<strong>' + graph.totalFileChanges + '</strong> file changes &middot; ' +
-          'Branch: <code>' + esc(graph.branch) + '</code> &middot; ' +
-          'Session: <code>' + graph.sessionId.slice(0, 8) + '</code>';
+        const totalTokens = (graph.totalInputTokens || 0) + (graph.totalOutputTokens || 0);
+        let html = '';
+        html += pill('sp-prompts', graph.prompts.length, 'prompts');
+        html += pill('sp-agents',  graph.totalSubagents || 0, 'agents');
+        html += pill('sp-files',   graph.totalFileChanges, 'files');
+        if (totalTokens > 0) { html += pill('sp-tokens', fmtCompact(totalTokens), 'tok'); }
+        el.innerHTML = html;
+        document.getElementById('stats-toggle').textContent = statsDashboardOpen ? '▴' : '▾';
       }
+
+      const TOOL_CATEGORIES = {
+        Read:'cat-file', Write:'cat-file', Edit:'cat-file', MultiEdit:'cat-file',
+        Glob:'cat-file', Grep:'cat-file', NotebookEdit:'cat-file', NotebookRead:'cat-file',
+        Bash:'cat-shell', Terminal:'cat-shell',
+        Agent:'cat-agent', Task:'cat-agent', SubAgent:'cat-agent',
+        WebSearch:'cat-web', WebFetch:'cat-web', Fetch:'cat-web',
+      };
+      function toolCategory(name) { return TOOL_CATEGORIES[name] || 'cat-other'; }
+
+
+      function pill(cls, value, label) {
+        return '<span class="stat-pill ' + cls + '"><strong>' + value + '</strong>' +
+          (label ? '<span class="spl">' + label + '</span>' : '') + '</span>';
+      }
+
+      function renderStatsDashboard() {
+        if (!graph) { return; }
+        const el = document.getElementById('stats-dashboard-inner');
+
+        const durationStr = graph.sessionDurationMs > 0 ? fmtDuration(graph.sessionDurationMs) : '—';
+        const startStr = graph.startedAt ? new Date(graph.startedAt).toLocaleString() : '—';
+        const inputTok  = graph.totalInputTokens  || 0;
+        const outputTok = graph.totalOutputTokens || 0;
+        const cacheRead = (graph.totalCacheReadTokens || 0) + (graph.totalCacheWriteTokens || 0);
+        const totalTok  = inputTok + outputTok;
+        const toolTotals = new Map();
+        for (const p of graph.prompts) {
+          for (const t of (p.toolsUsed || [])) {
+            toolTotals.set(t.name, (toolTotals.get(t.name) || 0) + t.count);
+          }
+        }
+        const topTools = Array.from(toolTotals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        const maxToolCalls = topTools[0]?.[1] || 1;
+
+        const fileCounts = new Map();
+        for (const p of graph.prompts) {
+          for (const f of (p.fileChanges || [])) { fileCounts.set(f.filePath, (fileCounts.get(f.filePath) || 0) + 1); }
+          for (const sa of (p.subagents || [])) {
+            for (const f of (sa.fileChanges || [])) { fileCounts.set(f.filePath, (fileCounts.get(f.filePath) || 0) + 1); }
+          }
+        }
+        const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+        let html = '';
+
+        // --- Session overview ---
+        html += '<div class="dash-section"><h4>Session Overview</h4>';
+        html += '<div class="overview-cards">';
+        html += ovCard('oc-prompts', graph.prompts.length, 'Prompts');
+        html += ovCard('oc-agents',  graph.totalSubagents || 0, 'Agents');
+        html += ovCard('oc-dur',     durationStr, 'Duration');
+        html += ovCard('oc-files',   graph.totalFileChanges, 'Files');
+        html += '</div>';
+        html += '<div class="session-started">Branch: <strong>' + esc(graph.branch || 'HEAD') + '</strong> &nbsp;&middot;&nbsp; Started: ' + startStr + '</div>';
+        html += '</div>';
+
+        // --- Tokens ---
+        if (totalTok > 0) {
+          const models = [...new Set(graph.prompts.map(p => p.model).filter(Boolean))];
+          const modelStr = models.length === 1 ? models[0] : (models.length > 1 ? models.length + ' models' : '');
+          html += '<div class="dash-section"><h4>Tokens</h4>';
+          html += '<div class="cost-banner">';
+          html += '<div><div class="cost-amount">' + fmtNum(totalTok) + '</div><div class="cost-sublabel">total tokens</div></div>';
+          html += '<div class="cost-right">';
+          if (modelStr) { html += esc(modelStr); }
+          html += '</div></div>';
+          html += '<div class="token-row">';
+          html += tokItem('tok-in',  fmtNum(inputTok),  'Input');
+          html += tokItem('tok-out', fmtNum(outputTok), 'Output');
+          if (cacheRead > 0) { html += tokItem('tok-cache', fmtNum(cacheRead), 'Cache'); }
+          html += '</div></div>';
+        }
+
+        // --- Top tools ---
+        if (topTools.length > 0) {
+          html += '<div class="dash-section"><h4>Top Tools</h4><div class="tool-bar-list">';
+          for (const [name, count] of topTools) {
+            const pct = Math.round((count / maxToolCalls) * 100);
+            html += '<div class="tool-bar-item">' +
+              '<span class="tool-bar-name">' + esc(name) + '</span>' +
+              '<div class="tool-bar-track"><div class="tool-bar-fill" style="width:' + pct + '%"></div></div>' +
+              '<span class="tool-bar-count">' + count + '</span>' +
+              '</div>';
+          }
+          html += '</div></div>';
+        }
+
+        // --- Most changed files ---
+        if (topFiles.length > 0) {
+          html += '<div class="dash-section"><h4>Most Changed Files</h4><ul class="file-stat-list">';
+          for (const [fp, count] of topFiles) {
+            const parts = fp.split(/[\\/]/);
+            const name = parts[parts.length - 1] || fp;
+            html += '<li class="file-stat-item">' +
+              '<span class="file-stat-name" title="' + esc(fp) + '">' + esc(name) + '</span>' +
+              '<span class="file-stat-badge">' + count + 'x</span>' +
+              '</li>';
+          }
+          html += '</ul></div>';
+        }
+
+        el.innerHTML = html;
+      }
+
+      function ovCard(cls, value, label) {
+        return '<div class="overview-card ' + cls + '"><div class="ov-value">' + value + '</div><div class="ov-label">' + label + '</div></div>';
+      }
+      function tokItem(cls, value, label) {
+        return '<div class="token-item"><div class="tok-val ' + cls + '">' + value + '</div><div class="tok-lbl">' + label + '</div></div>';
+      }
+      function fmtNum(n) { return (n || 0).toLocaleString(); }
+      function fmtCompact(n) {
+        if (n >= 1000000) { return (n / 1000000).toFixed(1) + 'M'; }
+        if (n >= 10000)   { return Math.round(n / 1000) + 'k'; }
+        return fmtNum(n);
+      }
+      function fmtDuration(ms) {
+        const s = Math.round(ms / 1000);
+        if (s < 60) { return s + 's'; }
+        const m = Math.round(s / 60);
+        if (m < 60) { return m + 'm'; }
+        const h = Math.floor(m / 60);
+        return h + 'h ' + (m % 60) + 'm';
+      }
+
+      document.getElementById('stats').addEventListener('click', () => {
+        statsDashboardOpen = !statsDashboardOpen;
+        const dash = document.getElementById('stats-dashboard');
+        dash.classList.toggle('visible', statsDashboardOpen);
+        document.getElementById('stats-toggle').textContent = statsDashboardOpen ? '▴' : '▾';
+        if (statsDashboardOpen) { renderStatsDashboard(); }
+      });
 
       function renderGraph() {
         const container = document.getElementById('graph');
@@ -869,11 +1162,11 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             label =
               '<div class="prompt-text">' + esc(truncate(p.prompt, 80)) + '</div>' +
               '<div class="meta">' +
-                '<span class="model">' + esc(p.model) + '</span> &middot; ' +
-                new Date(p.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) +
-                (totalTools > 0 ? ' &middot; <span class="tools-count">' + totalTools + ' tool call' + (totalTools !== 1 ? 's' : '') + '</span>' : '') +
+                '<span class="time">' + new Date(p.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + '</span>' +
                 (totalFiles > 0 ? ' &middot; <span class="files-count">' + totalFiles + ' file' + (totalFiles !== 1 ? 's' : '') + '</span>' : '') +
+                (totalTools > 0 ? ' &middot; <span class="tools-count">' + totalTools + ' tool call' + (totalTools !== 1 ? 's' : '') + '</span>' : '') +
                 (p.subagents.length > 0 ? ' &middot; <span class="subagent-count">' + p.subagents.length + ' subagent' + (p.subagents.length !== 1 ? 's' : '') + '</span>' : '') +
+                ' &middot; <span class="model">' + esc(p.model) + '</span>' +
               '</div>';
           } else {
             const sa = row.data;
@@ -1000,6 +1293,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             panel.innerHTML = renderPromptDetail(prompt);
             attachFileHandlers(panel, prompt.id, 'prompt');
             attachCopyHandlers(panel);
+            attachCollapsibleHandlers(panel);
             attachViewOutputHandler(panel);
             return;
           }
@@ -1010,7 +1304,14 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       function renderPromptDetail(prompt) {
         let html = '';
 
-        html += '<div class="detail-section"><h3>Prompt <button class="copy-btn" data-copy="' + esc(prompt.prompt) + '" title="Copy prompt">Copy</button></h3>';
+        const idx = graph.prompts.indexOf(prompt);
+        const timeStr = new Date(prompt.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        html += '<div class="detail-node-header">';
+        html += '<span class="node-index">Prompt #' + (idx + 1) + '</span>';
+        html += '<span class="node-time">' + timeStr + '</span>';
+        html += '</div>';
+
+        html += '<div class="detail-section"><h3><span>Prompt</span><button class="copy-btn" data-copy="' + esc(prompt.prompt) + '" title="Copy prompt">Copy</button></h3>';
         html += '<div class="detail-prompt">' + esc(prompt.prompt) + '</div></div>';
 
         if (prompt.response) {
@@ -1019,30 +1320,47 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
           html += '</div>';
         }
 
-        html += '<div class="detail-section"><h3>Details</h3><div class="detail-meta">';
-        html += 'Model: <code>' + esc(prompt.model) + '</code><br>';
-        html += 'Time: ' + new Date(prompt.timestamp).toLocaleString() + '<br>';
-        html += 'Session: <code>' + esc(prompt.sessionId.slice(0, 8)) + '</code> <button class="copy-btn" data-copy="' + esc(prompt.sessionId) + '" title="Copy session ID">Copy</button>';
-        html += '</div></div>';
-
-        if (prompt.toolsUsed && prompt.toolsUsed.length > 0) {
-          const totalCalls = prompt.toolsUsed.reduce((s, t) => s + t.count, 0);
-          html += '<div class="detail-section"><h3>Tools Used (' + totalCalls + ' call' + (totalCalls !== 1 ? 's' : '') + ')</h3>';
-          html += '<div class="tool-badges">';
-          for (const t of prompt.toolsUsed) {
-            html += '<span class="tool-badge">' + esc(t.name) + '<span class="tool-count">' + t.count + '</span></span>';
-          }
-          html += '</div></div>';
-        }
-
         if (prompt.fileChanges.length > 0) {
-          html += '<div class="detail-section"><h3>Files Changed (' + prompt.fileChanges.length + ')</h3>';
+          html += '<div class="detail-section"><h3><span>Files Changed</span><span class="section-count">' + prompt.fileChanges.length + '</span></h3>';
           html += renderFileList(prompt.fileChanges);
           html += '</div>';
         }
 
+        if (prompt.toolsUsed && prompt.toolsUsed.length > 0) {
+          const totalCalls = prompt.toolsUsed.reduce((s, t) => s + t.count, 0);
+          const sorted = [...prompt.toolsUsed].sort((a, b) => b.count - a.count);
+          const maxCount = sorted[0].count;
+          html += '<div class="detail-section"><h3><span>Tools Used</span><span class="section-count">' + totalCalls + ' call' + (totalCalls !== 1 ? 's' : '') + '</span></h3>';
+          html += '<div class="tool-bar-chart">';
+          for (const t of sorted) {
+            const pct = Math.round((t.count / maxCount) * 100);
+            html += '<div class="tc-row">';
+            html += '<span class="tc-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
+            html += '<div class="tc-track"><div class="tc-fill ' + toolCategory(t.name) + '" style="width:' + pct + '%"></div></div>';
+            html += '<span class="tc-count">' + t.count + '</span>';
+            html += '</div>';
+          }
+          html += '</div></div>';
+        }
+
+        html += '<div class="detail-section">';
+        html += '<h3 class="collapsible-header open"><span class="chev">▾</span><span>Details</span></h3>';
+        html += '<div class="collapsible-body open"><div class="detail-grid">';
+        html += '<span class="detail-key">Model</span><span class="detail-val"><code>' + esc(prompt.model) + '</code></span>';
+        if (prompt.tokenUsage) {
+          const tu = prompt.tokenUsage;
+          const totalTok = (tu.inputTokens || 0) + (tu.outputTokens || 0);
+          if (totalTok > 0) {
+            let tokHtml = '<span class="tok-in">' + fmtNum(tu.inputTokens) + '</span> in · <span class="tok-out">' + fmtNum(tu.outputTokens) + '</span> out';
+            if ((tu.cacheReadTokens || 0) > 0) { tokHtml += ' · <span class="tok-cache">' + fmtNum(tu.cacheReadTokens) + '</span> cache'; }
+            html += '<span class="detail-key">Tokens</span><span class="detail-val">' + tokHtml + '</span>';
+          }
+        }
+        html += '<span class="detail-key">Session</span><span class="detail-val"><code>' + esc(prompt.sessionId.slice(0, 8)) + '</code> <button class="copy-btn" data-copy="' + esc(prompt.sessionId) + '" title="Copy session ID">Copy</button></span>';
+        html += '</div></div></div>';
+
         if (prompt.subagents.length > 0) {
-          html += '<div class="detail-section"><h3>Subagents (' + prompt.subagents.length + ')</h3>';
+          html += '<div class="detail-section"><h3><span>Subagents</span><span class="section-count">' + prompt.subagents.length + '</span></h3>';
           html += '<ul class="subagent-list">';
           for (const sa of prompt.subagents) {
             const color = LANE_COLORS[sa.laneIndex % LANE_COLORS.length];
@@ -1095,11 +1413,8 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
           const parts = f.filePath.split(/[\\/]/);
           const name = parts.pop() || f.filePath;
           const dir = parts.length > 0 ? parts[parts.length - 1] : '';
-          const icon = f.changeType === 'create' ? '+' : '~';
-          const iconClass = f.changeType;
-
           html += '<li data-file-index="' + i + '" data-file-path="' + esc(f.filePath) + '">';
-          html += '<span class="file-icon ' + iconClass + '">' + icon + '</span>';
+          html += '<span class="file-icon">●</span>';
           html += '<span class="file-name" title="' + esc(f.filePath) + '">';
           if (dir) html += '<span style="opacity:0.5">' + esc(dir) + '/</span>';
           html += esc(name);
@@ -1188,6 +1503,20 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
             copyText(btn.getAttribute('data-copy'), btn);
+          });
+        });
+      }
+
+      function attachCollapsibleHandlers(container) {
+        container.querySelectorAll('.collapsible-header').forEach(header => {
+          header.addEventListener('click', () => {
+            const isOpen = header.classList.toggle('open');
+            const chev = header.querySelector('.chev');
+            if (chev) { chev.textContent = isOpen ? '▾' : '▸'; }
+            const body = header.nextElementSibling;
+            if (body && body.classList.contains('collapsible-body')) {
+              body.classList.toggle('open', isOpen);
+            }
           });
         });
       }

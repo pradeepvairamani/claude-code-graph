@@ -1,3 +1,11 @@
+/** Token usage for a single assistant response turn */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 /** A file change produced by a single tool call (Write or Edit) */
 export interface FileChange {
   filePath: string;
@@ -25,6 +33,8 @@ export interface PromptNode {
   response: string;
   /** Tools invoked during this prompt's response, with call counts */
   toolsUsed: Array<{ name: string; count: number }>;
+  /** Individual tool call inputs, in order of execution */
+  toolCalls: Array<{ name: string; input: Record<string, unknown> }>;
   /** Session ID */
   sessionId: string;
   /** Files changed by this prompt (directly or via tool calls) */
@@ -33,6 +43,8 @@ export interface PromptNode {
   subagents: SubagentNode[];
   /** Index in the main prompt sequence (for ordering) */
   sequenceIndex: number;
+  /** Token usage across all response turns for this prompt */
+  tokenUsage: TokenUsage;
 }
 
 /** A subagent spawned from a prompt */
@@ -67,6 +79,13 @@ export interface SessionGraph {
   totalFileChanges: number;
   /** Total subagents spawned */
   totalSubagents: number;
+  /** Aggregated token counts across all prompts */
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+  /** Session duration in ms (first to last prompt timestamp) */
+  sessionDurationMs: number;
 }
 
 /** Raw JSONL entry — minimal fields we care about */
@@ -84,6 +103,12 @@ export interface RawTranscriptEntry {
     role: string;
     model?: string;
     content: string | ContentBlock[];
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
   };
   toolUseResult?: {
     type?: string;

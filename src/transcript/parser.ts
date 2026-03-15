@@ -7,6 +7,7 @@ import type {
   PromptNode,
   SubagentNode,
   FileChange,
+  TokenUsage,
 } from './types';
 
 /**
@@ -110,8 +111,12 @@ export class TranscriptParser {
       // Extract assistant response text (text + thinking blocks)
       const response = this.extractResponseText(responseEntries);
 
-      // Extract tool usage counts
-      const toolsUsed = this.extractToolsUsed(responseEntries);
+      // Extract individual tool calls, then derive aggregated counts
+      const toolCalls = this.extractToolCalls(responseEntries);
+      const toolsUsed = this.deriveToolsUsed(toolCalls);
+
+      // Extract token usage from all assistant response turns
+      const tokenUsage = this.extractTokenUsage(responseEntries);
 
       prompts.push({
         id: promptUuid,
@@ -120,23 +125,40 @@ export class TranscriptParser {
         model,
         response,
         toolsUsed,
+        toolCalls,
         sessionId,
         fileChanges,
         subagents,
         sequenceIndex: seqIndex,
+        tokenUsage,
       });
     }
 
     // Calculate totals
     let totalFileChanges = 0;
     let totalSubagents = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalCacheReadTokens = 0;
+    let totalCacheWriteTokens = 0;
+
     for (const p of prompts) {
       totalFileChanges += p.fileChanges.length;
       totalSubagents += p.subagents.length;
       for (const sa of p.subagents) {
         totalFileChanges += sa.fileChanges.length;
       }
+      totalInputTokens     += p.tokenUsage.inputTokens;
+      totalOutputTokens    += p.tokenUsage.outputTokens;
+      totalCacheReadTokens += p.tokenUsage.cacheReadTokens;
+      totalCacheWriteTokens += p.tokenUsage.cacheWriteTokens;
     }
+
+    const firstTs = prompts[0]?.timestamp ? new Date(prompts[0].timestamp).getTime() : 0;
+    const lastTs  = prompts[prompts.length - 1]?.timestamp
+      ? new Date(prompts[prompts.length - 1].timestamp).getTime()
+      : 0;
+    const sessionDurationMs = firstTs && lastTs ? lastTs - firstTs : 0;
 
     return {
       sessionId,
@@ -146,6 +168,11 @@ export class TranscriptParser {
       prompts,
       totalFileChanges,
       totalSubagents,
+      totalInputTokens,
+      totalOutputTokens,
+      totalCacheReadTokens,
+      totalCacheWriteTokens,
+      sessionDurationMs,
     };
   }
 
@@ -156,7 +183,7 @@ export class TranscriptParser {
     const content = fs.readFileSync(filePath, 'utf-8');
     const entries: RawTranscriptEntry[] = [];
 
-    for (const line of content.split('\n')) {
+    for (const line of content.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) { continue; }
       try {
@@ -249,25 +276,56 @@ export class TranscriptParser {
   }
 
   /**
-   * Extract tool usage counts from assistant response entries.
+   * Sum token usage across all assistant response entries for a prompt.
    */
-  private extractToolsUsed(
-    responseEntries: RawTranscriptEntry[]
-  ): Array<{ name: string; count: number }> {
-    const counts = new Map<string, number>();
+  private extractTokenUsage(responseEntries: RawTranscriptEntry[]): TokenUsage {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
 
+    for (const entry of responseEntries) {
+      if (entry.type !== 'assistant' || !entry.message?.usage) { continue; }
+      const u = entry.message.usage;
+      inputTokens      += u.input_tokens                 ?? 0;
+      outputTokens     += u.output_tokens                ?? 0;
+      cacheReadTokens  += u.cache_read_input_tokens      ?? 0;
+      cacheWriteTokens += u.cache_creation_input_tokens  ?? 0;
+    }
+
+    return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+  }
+
+  /**
+   * Extract individual tool call inputs from assistant response entries.
+   */
+  private extractToolCalls(
+    responseEntries: RawTranscriptEntry[]
+  ): Array<{ name: string; input: Record<string, unknown> }> {
+    const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
     for (const entry of responseEntries) {
       if (entry.type !== 'assistant' || !entry.message) { continue; }
       const content = entry.message.content;
       if (!Array.isArray(content)) { continue; }
-
       for (const block of content) {
         if (block.type === 'tool_use' && block.name) {
-          counts.set(block.name, (counts.get(block.name) || 0) + 1);
+          calls.push({ name: block.name, input: (block.input as Record<string, unknown>) || {} });
         }
       }
     }
+    return calls;
+  }
 
+  /**
+   * Derive tool usage counts from individual tool calls.
+   */
+  private deriveToolsUsed(
+    toolCalls: Array<{ name: string; input: Record<string, unknown> }>
+  ): Array<{ name: string; count: number }> {
+    const counts = new Map<string, number>();
+    for (const tc of toolCalls) {
+      counts.set(tc.name, (counts.get(tc.name) || 0) + 1);
+    }
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ name, count }));
