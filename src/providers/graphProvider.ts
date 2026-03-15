@@ -184,6 +184,8 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
     sessionId?: string;
     nodeType?: string;
     fileIndex?: number;
+    content?: string;
+    toolName?: string;
   }): Promise<void> {
     switch (msg.type) {
       case 'openFile': {
@@ -215,6 +217,40 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             language: 'markdown',
           });
           await vscode.window.showTextDocument(doc, { preview: true });
+        }
+        break;
+      }
+      case 'openToolDetail': {
+        if (msg.content) {
+          const lang = (msg.toolName === 'Bash' || msg.toolName === 'Terminal') ? 'shellscript' : 'plaintext';
+          const doc = await vscode.workspace.openTextDocument({ content: msg.content, language: lang });
+          await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: false });
+        }
+        break;
+      }
+      case 'getToolCalls': {
+        const prompt = this.currentGraph?.prompts.find(p => p.id === msg.nodeId);
+        if (prompt && msg.toolName) {
+          const calls = prompt.toolCalls
+            .filter(tc => tc.name === msg.toolName)
+            .map(tc => {
+              // Send only the relevant summary keys, truncated for safety
+              const slim: Record<string, unknown> = {};
+              for (const [k, v] of Object.entries(tc.input)) {
+                if (typeof v === 'string') {
+                  slim[k] = v.length > 500 ? v.slice(0, 500) + '...' : v;
+                } else {
+                  slim[k] = v;
+                }
+              }
+              return slim;
+            });
+          this.sidebarView?.webview.postMessage({
+            type: 'toolCallData',
+            toolName: msg.toolName,
+            nodeId: msg.nodeId,
+            calls,
+          });
         }
         break;
       }
@@ -343,15 +379,19 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
 
     const lightGraph: Record<string, unknown> = {
       ...graph,
-      prompts: graph.prompts.map(p => ({
-        ...p,
-        response: !!p.response,
-        fileChanges: dedupFiles(p.fileChanges),
-        subagents: p.subagents.map(sa => ({
-          ...sa,
-          fileChanges: dedupFiles(sa.fileChanges),
-        })),
-      })),
+      prompts: graph.prompts.map(p => {
+        // Strip toolCalls and response content — toolCalls are fetched on-demand
+        const { toolCalls: _tc, response: _resp, ...rest } = p;
+        return {
+          ...rest,
+          response: !!_resp,
+          fileChanges: dedupFiles(p.fileChanges),
+          subagents: p.subagents.map(sa => ({
+            ...sa,
+            fileChanges: dedupFiles(sa.fileChanges),
+          })),
+        };
+      }),
     };
 
     // Recalculate file change totals from deduplicated data
@@ -761,7 +801,15 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       .badge.subagents { background: rgba(188, 137, 189, 0.15); color: #bc89bd; }
 
       .tool-bar-chart { display: flex; flex-direction: column; gap: 5px; }
-      .tc-row { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 2px 4px; border-radius: 3px; margin: 0 -4px; }
+      .tc-row { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 2px 4px; border-radius: 3px; margin: 0 -4px; cursor: pointer; }
+      .tc-row:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+      .tc-row.active { background: var(--vscode-list-activeSelectionBackground, #37373d); }
+      .tc-calls { margin: 2px 0 6px 0; padding: 4px 0 4px 8px; border-left: 2px solid var(--vscode-panel-border, #333); }
+      .tc-call-item { font-size: 10px; padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tc-call-item .cmd { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+      .tc-call-item .path { color: var(--vscode-textLink-foreground, #3794ff); }
+      .tc-open-btn { display: inline-block; margin-top: 3px; font-size: 9px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--vscode-panel-border, #444); background: transparent; color: var(--vscode-descriptionForeground, #888); cursor: pointer; }
+      .tc-open-btn:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); color: var(--vscode-foreground, #ccc); }
       .tc-name { width: 68px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .tc-track { flex: 1; height: 5px; background: var(--vscode-textBlockQuote-background, #252526); border-radius: 3px; overflow: hidden; }
       .tc-fill { height: 100%; border-radius: 3px; }
@@ -839,6 +887,43 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
               selectedRow.classList.add('selected');
               showDetail(selectedNodeId, selectedRow.getAttribute('data-node-type'));
             }
+          }
+        }
+        if (msg.type === 'toolCallData') {
+          var row = document.querySelector('.tc-row[data-tool="' + msg.toolName + '"][data-node-id="' + msg.nodeId + '"]');
+          if (!row) { return; }
+          var existing = row.nextElementSibling;
+          if (existing && existing.classList.contains('tc-calls')) { existing.remove(); }
+          var calls = msg.calls || [];
+          var summaries = [];
+          for (var i = 0; i < calls.length; i++) {
+            var sm = toolCallSummary(msg.toolName, calls[i]);
+            if (sm) { summaries.push(sm); }
+          }
+          if (summaries.length === 0) { row.classList.remove('active'); return; }
+          var div = document.createElement('div');
+          div.className = 'tc-calls';
+          var h = '';
+          for (var j = 0; j < summaries.length; j++) {
+            var short = summaries[j].val.length > 100 ? summaries[j].val.slice(0, 100) + '\\u2026' : summaries[j].val;
+            h += '<div class="tc-call-item"><span class="' + summaries[j].cls + '">' + esc(short) + '</span></div>';
+          }
+          if (summaries.some(function(x) { return x.val.length > 100; }) || summaries.length > 3) {
+            h += '<button class="tc-open-btn">open all in editor</button>';
+          }
+          div.innerHTML = h;
+          row.after(div);
+          var openBtn = div.querySelector('.tc-open-btn');
+          if (openBtn) {
+            openBtn.addEventListener('click', function(e) {
+              e.stopPropagation();
+              var parts = [];
+              for (var k = 0; k < summaries.length; k++) {
+                var hdr = summaries.length > 1 ? '\\u2500\\u2500\\u2500 ' + msg.toolName + ' ' + (k + 1) + ' of ' + summaries.length + ' \\u2500\\u2500\\u2500\\n' : '';
+                parts.push(hdr + summaries[k].val);
+              }
+              vscode.postMessage({ type: 'openToolDetail', content: parts.join('\\n\\n'), toolName: msg.toolName });
+            });
           }
         }
       });
@@ -938,6 +1023,25 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
       };
       function toolCategory(name) { return TOOL_CATEGORIES[name] || 'cat-other'; }
 
+      function toolCallSummary(name, inp) {
+        if (!inp) { return null; }
+        var s = function(v) { return v == null ? '' : String(v); };
+        var val = '', cls = '';
+        if (name === 'Bash' || name === 'Terminal') { val = s(inp.command || inp.cmd || ''); cls = 'cmd'; }
+        else if (/^(Read|Write|Edit|MultiEdit|NotebookEdit)$/.test(name)) { val = s(inp.file_path || inp.path || ''); cls = 'path'; }
+        else if (name === 'Glob' || name === 'Grep') { val = s(inp.pattern || '') + (inp.path ? ' in ' + s(inp.path) : ''); cls = 'cmd'; }
+        else if (name === 'WebSearch' || name === 'ToolSearch') { val = s(inp.query || ''); }
+        else if (name === 'WebFetch' || name === 'Fetch') { val = s(inp.url || ''); cls = 'path'; }
+        else if (name === 'Agent' || name === 'Task' || name === 'SubAgent') { val = s(inp.description || inp.prompt || '').slice(0, 120); }
+        else if (name === 'TodoWrite') {
+          var todos = Array.isArray(inp.todos) ? inp.todos : [];
+          if (todos.length === 0) { return null; }
+          val = todos.map(function(t) { return (t.status === 'completed' ? '\\u2713 ' : '\\u25CB ') + s(t.content || ''); }).join(' | ');
+        }
+        else { for (var k in inp) { if (typeof inp[k] === 'string' && inp[k].trim()) { val = inp[k]; break; } } }
+        if (!val || !val.trim()) { return null; }
+        return { val: val, cls: cls };
+      }
 
       function pill(cls, value, label) {
         return '<span class="stat-pill ' + cls + '"><strong>' + value + '</strong>' +
@@ -1298,6 +1402,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             attachFileHandlers(panel, prompt.id, 'prompt');
             attachCopyHandlers(panel);
             attachCollapsibleHandlers(panel);
+            attachToolClickHandlers(panel);
             attachViewOutputHandler(panel);
             return;
           }
@@ -1338,7 +1443,7 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
           html += '<div class="tool-bar-chart">';
           for (const t of sorted) {
             const pct = Math.round((t.count / maxCount) * 100);
-            html += '<div class="tc-row">';
+            html += '<div class="tc-row" data-tool="' + esc(t.name) + '" data-node-id="' + esc(prompt.id) + '">';
             html += '<span class="tc-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
             html += '<div class="tc-track"><div class="tc-fill ' + toolCategory(t.name) + '" style="width:' + pct + '%"></div></div>';
             html += '<span class="tc-count">' + t.count + '</span>';
@@ -1521,6 +1626,25 @@ export class PromptGraphProvider implements vscode.WebviewViewProvider, vscode.D
             if (body && body.classList.contains('collapsible-body')) {
               body.classList.toggle('open', isOpen);
             }
+          });
+        });
+      }
+
+      function attachToolClickHandlers(container) {
+        container.querySelectorAll('.tc-row').forEach(function(row) {
+          row.addEventListener('click', function() {
+            var existing = row.nextElementSibling;
+            if (existing && existing.classList.contains('tc-calls')) {
+              existing.remove();
+              row.classList.remove('active');
+              return;
+            }
+            row.classList.add('active');
+            vscode.postMessage({
+              type: 'getToolCalls',
+              toolName: row.getAttribute('data-tool'),
+              nodeId: row.getAttribute('data-node-id')
+            });
           });
         });
       }
